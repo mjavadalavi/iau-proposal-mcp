@@ -6,8 +6,15 @@ from datetime import datetime
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from pypdf import PdfReader
 
 from proposal_writer_iau_mcp import loader, papers, validator
+
+
+def _read_pdf(path: Path) -> str:
+    reader = PdfReader(str(path))
+    pages = [page.extract_text() or "" for page in reader.pages]
+    return "\n\n".join(pages)
 
 
 def register(mcp: FastMCP) -> None:  # noqa: C901
@@ -127,15 +134,54 @@ def register(mcp: FastMCP) -> None:  # noqa: C901
 
     @mcp.tool()
     def read_proposal(file_path: str) -> str:
-        """خواندن محتوای فایل پروپوزال موجود.
+        """خواندن محتوای فایل پروپوزال — پشتیبانی از PDF و markdown/txt.
 
         Args:
-            file_path: مسیر کامل فایل پروپوزال
+            file_path: مسیر کامل فایل پروپوزال (.md / .txt / .pdf)
         """
         path = Path(file_path).expanduser()
         if not path.exists():
             return f"❌ فایل '{file_path}' یافت نشد."
+        if path.suffix.lower() == ".pdf":
+            return _read_pdf(path)
         return path.read_text(encoding="utf-8")
+
+    @mcp.tool()
+    def read_pdf(file_path: str, pages: str = "") -> str:
+        """استخراج متن از فایل PDF — مقاله، کتاب، یا پروپوزال اسکن‌شده.
+
+        Args:
+            file_path: مسیر کامل فایل PDF
+            pages: بازه صفحات — مثال: '1-5' یا '3' (خالی = همه صفحات)
+        """
+        path = Path(file_path).expanduser()
+        if not path.exists():
+            return f"❌ فایل '{file_path}' یافت نشد."
+        if path.suffix.lower() != ".pdf":
+            return f"❌ فایل باید PDF باشد (پسوند: {path.suffix})"
+
+        reader = PdfReader(str(path))
+        total = len(reader.pages)
+
+        if pages:
+            try:
+                if "-" in pages:
+                    start, end = pages.split("-", 1)
+                    indices = range(int(start) - 1, min(int(end), total))
+                else:
+                    indices = range(int(pages) - 1, int(pages))
+            except ValueError:
+                return "❌ فرمت صفحات اشتباه است — مثال: '1-5' یا '3'"
+        else:
+            indices = range(total)
+
+        extracted = []
+        for i in indices:
+            text = reader.pages[i].extract_text() or ""
+            extracted.append(f"── صفحه {i + 1} ──\n{text}")
+
+        header = f"📄 {path.name}  |  {total} صفحه\n\n"
+        return header + "\n\n".join(extracted)
 
     @mcp.tool()
     def search_papers(
